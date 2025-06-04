@@ -1,2 +1,0 @@
-# pyFolders
-every daily

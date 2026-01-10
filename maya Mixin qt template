@@ -1,0 +1,81 @@
+from PySide2 import QtWidgets, QtCore
+from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
+from maya import OpenMayaUI
+import maya.cmds as cmds
+
+# Compatibility
+try:
+    long
+except NameError:
+    long = int
+
+class Mix(MayaQWidgetDockableMixin, QtWidgets.QMainWindow):
+    _instance = None
+
+    def __init__(self, *args, **kwargs):
+        super(Mix, self).__init__(*args, **kwargs)
+
+        self.setWindowTitle("Test")
+        # Note: resize() in init is often overridden by Maya's docking system
+        # We will handle size in the show() method instead.
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+
+        self.table_widget = QtWidgets.QTableWidget()
+        self.table_widget.setColumnCount(1)
+        self.table_widget.setAlternatingRowColors(True)
+        self.table_widget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table_widget.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.table_widget.setShowGrid(False)
+        self.table_widget.setGridStyle(QtCore.Qt.NoPen)
+        self.table_widget.verticalHeader().setVisible(False)
+        self.table_widget.horizontalHeader().setVisible(False)
+        self.table_widget.horizontalHeader().setStretchLastSection(True)
+
+        for i in range(10):
+            self.table_widget.insertRow(i)
+            item = QtWidgets.QTableWidgetItem()
+            item.setText("test{0}".format(i))
+            self.table_widget.setItem(i, 0, item)
+
+        self.btn = QtWidgets.QPushButton("TEST")
+
+        self.layout.addWidget(self.table_widget)
+        self.layout.addWidget(self.btn)
+
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+
+def show():
+    # 1. Close existing window to ensure a clean start
+    # We look for the workspaceControl that Maya creates automatically
+    workspace_control_name = "MixWorkspaceControl"
+    if cmds.workspaceControl(workspace_control_name, exists=True):
+        cmds.deleteUI(workspace_control_name)
+    
+    # 2. Delete existing Python instance if it exists
+    if Mix._instance:
+        try:
+            Mix._instance.close()
+            Mix._instance.deleteLater()
+        except:
+            pass
+        Mix._instance = None
+
+    # 3. Create new instance
+    Mix._instance = Mix()
+    
+    # 4. Show with dockable=True and specific dimensions
+    Mix._instance.show(
+        dockable=True,
+        width=1200,   # Force width here
+        height=800,  # Force height here
+        area='right',
+        floating=True # Start floating to ensure size is respected initially
+    )
+
+# Run
+if __name__ == '__main__':
+    show()

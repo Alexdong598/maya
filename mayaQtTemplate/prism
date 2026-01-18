@@ -1,0 +1,217 @@
+from PySide2 import QtWidgets, QtCore, QtGui
+from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
+import maya.cmds as cmds
+import random
+
+# --- 1. Custom Widget for the Right List ---
+class VersionRowWidget(QtWidgets.QWidget):
+    def __init__(self, version, desc, user, date, parent=None):
+        super(VersionRowWidget, self).__init__(parent)
+        
+        self.layout = QtWidgets.QHBoxLayout(self)
+        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setSpacing(10)
+        
+        self.thumb = QtWidgets.QLabel("IMG")
+        self.thumb.setFixedSize(80, 45)
+        self.thumb.setStyleSheet("background-color: #444; border-radius: 4px; color: #888;")
+        self.thumb.setAlignment(QtCore.Qt.AlignCenter)
+        
+        self.icon_lbl = QtWidgets.QLabel("M")
+        self.icon_lbl.setFixedSize(24, 24)
+        self.icon_lbl.setStyleSheet("background-color: #d35400; color: white; border-radius: 3px; font-weight: bold;")
+        self.icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.text_layout = QtWidgets.QVBoxLayout()
+        self.lbl_ver = QtWidgets.QLabel(version)
+        self.lbl_ver.setStyleSheet("font-weight: bold; color: white;")
+        self.lbl_desc = QtWidgets.QLabel(desc)
+        self.lbl_desc.setStyleSheet("color: #aaa;")
+        self.text_layout.addWidget(self.lbl_ver)
+        self.text_layout.addWidget(self.lbl_desc)
+        
+        self.user_layout = QtWidgets.QVBoxLayout()
+        self.lbl_user = QtWidgets.QLabel(user)
+        self.lbl_user.setAlignment(QtCore.Qt.AlignRight)
+        self.lbl_user.setStyleSheet("color: #ccc;")
+        
+        self.lbl_date = QtWidgets.QLabel(date)
+        self.lbl_date.setAlignment(QtCore.Qt.AlignRight)
+        self.lbl_date.setStyleSheet("color: #777; font-size: 10px;")
+        
+        self.user_layout.addWidget(self.lbl_user)
+        self.user_layout.addWidget(self.lbl_date)
+
+        self.layout.addWidget(self.thumb)
+        self.layout.addWidget(self.icon_lbl)
+        self.layout.addLayout(self.text_layout)
+        self.layout.addStretch()
+        self.layout.addLayout(self.user_layout)
+
+# --- 2. Main Window Class ---
+class PrismClone(MayaQWidgetDockableMixin, QtWidgets.QMainWindow):
+    # This static variable holds the current instance
+    _instance = None
+
+    def __init__(self, *args, **kwargs):
+        super(PrismClone, self).__init__(*args, **kwargs)
+        self.setWindowTitle("Prism Project Browser")
+        
+        # Stylesheet
+        self.setStyleSheet("""
+            QMainWindow { background-color: #1e1e1e; }
+            QWidget { color: #dddddd; font-family: Segoe UI, sans-serif; }
+            QSplitter::handle { background-color: #111; width: 2px; }
+            QListWidget { background-color: #222; border: none; outline: none; }
+            QListWidget::item:selected { background-color: #3a5f8a; border-radius: 3px; }
+            QPushButton { background-color: #333; border: none; padding: 5px; border-radius: 3px; }
+            QPushButton:hover { background-color: #444; }
+            QTabWidget::pane { border: none; }
+            QTabBar::tab { background: #222; padding: 8px 20px; color: #888; }
+            QTabBar::tab:selected { background: #333; color: white; border-top: 2px solid #5a9fd4; }
+        """)
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(0,0,0,0)
+
+        # Build UI
+        self.build_header()
+        
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter.setHandleWidth(2)
+        self.main_layout.addWidget(self.splitter)
+
+        self.build_left_column()
+        self.build_middle_column()
+        self.build_right_column()
+
+        self.splitter.setSizes([300, 250, 600])
+
+    def build_header(self):
+        header = QtWidgets.QFrame()
+        header.setFixedHeight(50)
+        header.setStyleSheet("background-color: #252525; border-bottom: 1px solid #111;")
+        h_layout = QtWidgets.QHBoxLayout(header)
+        h_layout.addWidget(QtWidgets.QLabel("Options  Help"))
+        h_layout.addStretch()
+        h_layout.addWidget(QtWidgets.QLabel("User: John Doe | Project: Castle"))
+        self.main_layout.addWidget(header)
+
+    def build_left_column(self):
+        left_tab = QtWidgets.QTabWidget()
+        self.splitter.addWidget(left_tab)
+        
+        shots_widget = QtWidgets.QWidget()
+        left_tab.addTab(shots_widget, "Shots")
+        shots_layout = QtWidgets.QVBoxLayout(shots_widget)
+        shots_layout.setContentsMargins(0,0,0,0)
+        
+        inner_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.seq_tree = QtWidgets.QTreeWidget()
+        self.seq_tree.setHeaderHidden(True)
+        self.seq_tree.setStyleSheet("background-color: #1e1e1e;")
+        for i in range(1, 5):
+            self.seq_tree.addTopLevelItem(QtWidgets.QTreeWidgetItem(["SQ{:02d}".format(i)]))
+        inner_splitter.addWidget(self.seq_tree)
+        
+        self.shot_list = QtWidgets.QListWidget()
+        self.shot_list.setIconSize(QtCore.QSize(100, 60))
+        self.shot_list.setSpacing(2)
+        for i in range(10, 80, 10):
+            item = QtWidgets.QListWidgetItem("SH00{}".format(i))
+            pixmap = QtGui.QPixmap(100, 60)
+            pixmap.fill(QtGui.QColor(random.randint(50,80), random.randint(50,80), random.randint(50,80)))
+            item.setIcon(QtGui.QIcon(pixmap))
+            self.shot_list.addItem(item)
+            
+        inner_splitter.addWidget(self.shot_list)
+        inner_splitter.setSizes([80, 200])
+        shots_layout.addWidget(inner_splitter)
+
+    def build_middle_column(self):
+        mid_frame = QtWidgets.QFrame()
+        self.splitter.addWidget(mid_frame)
+        mid_layout = QtWidgets.QVBoxLayout(mid_frame)
+        
+        top_split = QtWidgets.QHBoxLayout()
+        
+        dept_layout = QtWidgets.QVBoxLayout()
+        dept_layout.addWidget(QtWidgets.QLabel("Departments:"))
+        self.dept_list = QtWidgets.QListWidget()
+        self.dept_list.addItems(["Layout", "Animation", "FX", "Lighting", "Comp"])
+        dept_layout.addWidget(self.dept_list)
+        
+        task_layout = QtWidgets.QVBoxLayout()
+        task_layout.addWidget(QtWidgets.QLabel("Tasks:"))
+        self.task_list = QtWidgets.QListWidget()
+        self.task_list.addItems(["🟢 Blocking", "🟢 Background", "🟠 Hero", "⚪ Secondary"])
+        task_layout.addWidget(self.task_list)
+
+        top_split.addLayout(dept_layout)
+        top_split.addLayout(task_layout)
+        mid_layout.addLayout(top_split)
+        
+        info_group = QtWidgets.QGroupBox("Shot Info")
+        info_layout = QtWidgets.QVBoxLayout(info_group)
+        info_layout.addWidget(QtWidgets.QLabel("Framerange: 1001-1035"))
+        mid_layout.addWidget(info_group)
+
+    def build_right_column(self):
+        right_frame = QtWidgets.QFrame()
+        self.splitter.addWidget(right_frame)
+        right_layout = QtWidgets.QVBoxLayout(right_frame)
+        right_layout.addWidget(QtWidgets.QLabel("Files:"))
+        
+        self.file_list = QtWidgets.QListWidget()
+        self.file_list.setSpacing(4)
+        right_layout.addWidget(self.file_list)
+        
+        data = [
+            ("v0009", "camera adjustment", "John Doe", "24.07.23 10:49"),
+            ("v0008", "tweaked pig curves", "John Doe", "24.07.23 10:50"),
+            ("v0007", "Houdini setup", "John Doe", "24.07.23 10:52"),
+        ]
+        
+        for ver, desc, user, date in data:
+            item = QtWidgets.QListWidgetItem()
+            item.setSizeHint(QtCore.QSize(100, 60))
+            self.file_list.addItem(item)
+            row_widget = VersionRowWidget(ver, desc, user, date)
+            self.file_list.setItemWidget(item, row_widget)
+
+# --- 3. Logic to Ensure Single Instance ---
+def show_prism():
+    # A. Define the unique Workspace Control Name
+    # Maya appends 'WorkspaceControl' to the objectName we give the window
+    control_name = "PrismCloneWorkspaceControl"
+
+    # B. Close the Maya Workspace Control if it exists (Physical Window)
+    if cmds.workspaceControl(control_name, exists=True):
+        cmds.deleteUI(control_name)
+    elif cmds.window("PrismClone", exists=True):
+        cmds.deleteUI("PrismClone")
+
+    # C. Close the Python Object if it exists (Memory Cleanup)
+    if PrismClone._instance:
+        try:
+            PrismClone._instance.close()
+            PrismClone._instance.deleteLater()
+        except:
+            pass
+        PrismClone._instance = None
+
+    # D. Create and Show New Instance
+    PrismClone._instance = PrismClone()
+    PrismClone._instance.setObjectName("PrismClone") # Crucial for finding it later
+    
+    PrismClone._instance.show(
+        dockable=True, 
+        width=1100, 
+        height=600, 
+        floating=True
+    )
+
+if __name__ == '__main__':
+    show_prism()

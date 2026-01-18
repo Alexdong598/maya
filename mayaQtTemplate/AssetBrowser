@@ -1,0 +1,314 @@
+from PySide2 import QtWidgets, QtCore, QtGui
+from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
+import maya.cmds as cmds
+import random
+
+# --- 1. Custom Card Widget (The Asset Thumbnail) ---
+class AssetCardWidget(QtWidgets.QWidget):
+    """
+    Represents one 'box' in the middle gallery.
+    Includes: Thumbnail, Price Tag, Name, Date.
+    """
+    def __init__(self, name, price, date, parent=None):
+        super(AssetCardWidget, self).__init__(parent)
+        self.setFixedSize(180, 200) # Size of the card
+        
+        # Main Layout
+        self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.setContentsMargins(0,0,0,0)
+        self.layout.setSpacing(0)
+        
+        # --- Top Area (Image + Overlay) ---
+        self.image_container = QtWidgets.QFrame()
+        self.image_container.setStyleSheet("background-color: #444; border-top-left-radius: 4px; border-top-right-radius: 4px;")
+        
+        # We use a grid layout on the image container to overlay items (like the price tag)
+        self.overlay_layout = QtWidgets.QGridLayout(self.image_container)
+        self.overlay_layout.setContentsMargins(5,5,5,5)
+        
+        # Price Tag (Top Right)
+        self.price_lbl = QtWidgets.QLabel(price)
+        self.price_lbl.setStyleSheet("""
+            background-color: #8db600; 
+            color: white; 
+            font-weight: bold; 
+            padding: 2px 6px; 
+            border-radius: 2px;
+        """)
+        self.price_lbl.setFixedHeight(20)
+        
+        # Add to overlay (Row 0, Col 1 -> Top Right)
+        self.overlay_layout.addWidget(self.price_lbl, 0, 1, QtCore.Qt.AlignRight | QtCore.Qt.AlignTop)
+        self.overlay_layout.setRowStretch(1, 1) # Push content up
+
+        # Center Icon (Placeholder for 3D model image)
+        self.center_icon = QtWidgets.QLabel("IMG")
+        self.center_icon.setAlignment(QtCore.Qt.AlignCenter)
+        self.center_icon.setStyleSheet("color: #666; font-size: 20px; font-weight: bold;")
+        self.overlay_layout.addWidget(self.center_icon, 1, 0, 1, 2, QtCore.Qt.AlignCenter)
+
+        # --- Bottom Area (Text Info) ---
+        self.info_frame = QtWidgets.QFrame()
+        self.info_frame.setFixedHeight(60)
+        self.info_frame.setStyleSheet("background-color: #333; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px;")
+        
+        self.info_layout = QtWidgets.QVBoxLayout(self.info_frame)
+        self.info_layout.setContentsMargins(8, 5, 8, 5)
+        self.info_layout.setSpacing(2)
+        
+        # Name
+        self.lbl_name = QtWidgets.QLabel(name)
+        self.lbl_name.setStyleSheet("color: white; font-weight: bold; font-size: 11px;")
+        self.lbl_name.setWordWrap(True)
+        
+        # Date
+        self.lbl_date = QtWidgets.QLabel(date)
+        self.lbl_date.setStyleSheet("color: #888; font-size: 10px;")
+        
+        self.info_layout.addWidget(self.lbl_name)
+        self.info_layout.addWidget(self.lbl_date)
+        self.info_layout.addStretch()
+
+        # Add parts to main layout
+        self.layout.addWidget(self.image_container)
+        self.layout.addWidget(self.info_frame)
+        
+        # Border style
+        self.setStyleSheet("""
+            AssetCardWidget { background-color: transparent; }
+            QFrame { border: none; }
+        """)
+
+# --- 2. Main Application Window ---
+class AssetBrowser(MayaQWidgetDockableMixin, QtWidgets.QMainWindow):
+    _instance = None
+
+    def __init__(self, *args, **kwargs):
+        super(AssetBrowser, self).__init__(*args, **kwargs)
+        self.setWindowTitle("3ds Max Style Asset Library")
+        
+        # GLOBAL STYLESHEET
+        self.setStyleSheet("""
+            QMainWindow { background-color: #2b2b2b; }
+            QWidget { font-family: Segoe UI, sans-serif; color: #ddd; }
+            QSplitter::handle { background-color: #1a1a1a; width: 2px; }
+            QTreeWidget { background-color: #222; border: none; }
+            QTreeWidget::item { padding: 4px; }
+            QTreeWidget::item:selected { background-color: #444; }
+            QListWidget { background-color: #252525; border: none; }
+            QLineEdit { background-color: #1a1a1a; border: 1px solid #444; border-radius: 10px; padding: 4px 10px; color: #eee; }
+            /* Scrollbar styling */
+            QScrollBar:vertical { background: #222; width: 10px; }
+            QScrollBar::handle:vertical { background: #444; border-radius: 4px; }
+        """)
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(0,0,0,0)
+
+        # A. BUILD HEADER (Toolbar)
+        self.build_header()
+
+        # B. MAIN SPLITTER (3 Columns)
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.main_layout.addWidget(self.splitter)
+
+        # --- LEFT PANEL (Tree) ---
+        self.build_left_panel()
+
+        # --- MIDDLE PANEL (Gallery Grid) ---
+        self.build_gallery_panel()
+
+        # --- RIGHT PANEL (Inspector) ---
+        self.build_inspector_panel()
+
+        # Ratios
+        self.splitter.setSizes([250, 600, 300])
+
+    def build_header(self):
+        header = QtWidgets.QFrame()
+        header.setFixedHeight(45)
+        header.setStyleSheet("background-color: #333; border-bottom: 1px solid #111;")
+        layout = QtWidgets.QHBoxLayout(header)
+        
+        # Logo Label
+        lbl_logo = QtWidgets.QLabel("ASSET LIBRARY")
+        lbl_logo.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
+        layout.addWidget(lbl_logo)
+        
+        layout.addStretch()
+        
+        # Search Bar
+        self.search_bar = QtWidgets.QLineEdit()
+        self.search_bar.setPlaceholderText("Search assets...")
+        self.search_bar.setFixedWidth(250)
+        layout.addWidget(self.search_bar)
+        
+        # TOOLS ICONS (The "Gear" you requested)
+        # Using Unicode characters to simulate icons without external images
+        for icon_text in ["⚙️", "📂", "⬇️"]:
+            btn = QtWidgets.QPushButton(icon_text)
+            btn.setFixedSize(30, 30)
+            btn.setStyleSheet("""
+                QPushButton { background-color: transparent; border: none; font-size: 16px; }
+                QPushButton:hover { background-color: #444; border-radius: 4px; }
+            """)
+            layout.addWidget(btn)
+
+        self.main_layout.addWidget(header)
+
+    def build_left_panel(self):
+        panel = QtWidgets.QFrame()
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(0,0,0,0)
+        
+        # Title
+        title = QtWidgets.QLabel("  Locations")
+        title.setStyleSheet("font-weight: bold; color: #aaa; padding: 5px;")
+        layout.addWidget(title)
+
+        # Tree Widget
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        
+        # Add Categories
+        categories = {
+            "Autodesk SEEK": [],
+            "Creative Market": ["Animals", "Architecture", "Characters", "Environment", "Food", "Vehicles"],
+            "Downloads": []
+        }
+        
+        for root_name, subs in categories.items():
+            root_item = QtWidgets.QTreeWidgetItem([root_name])
+            root_item.setExpanded(True)
+            self.tree.addTopLevelItem(root_item)
+            for sub in subs:
+                child = QtWidgets.QTreeWidgetItem([sub])
+                root_item.addChild(child)
+                # Select "Animals" by default
+                if sub == "Animals":
+                    child.setSelected(True)
+        
+        layout.addWidget(self.tree)
+        self.splitter.addWidget(panel)
+
+    def build_gallery_panel(self):
+        # We use QListWidget in IconMode to create a flow grid
+        self.gallery_list = QtWidgets.QListWidget()
+        self.gallery_list.setViewMode(QtWidgets.QListWidget.IconMode)
+        self.gallery_list.setResizeMode(QtWidgets.QListWidget.Adjust) # Reflow items on resize
+        self.gallery_list.setSpacing(10)
+        self.gallery_list.setMovement(QtWidgets.QListWidget.Static) # Lock items in place
+        
+        # Populate with Fake Data
+        assets = [
+            ("PIG with Native File.zip", "$49.00", "15-03-28 20:54"),
+            ("PIGEON fbx only.zip", "$15.00", "15-03-29 22:08"),
+            ("RABBIT with Native", "$49.00", "15-03-28 20:34"),
+            ("RHINOCEROS fbx", "$15.00", "15-03-29 22:10"),
+            ("HORSE animated", "$60.00", "15-04-01 10:00"),
+            ("EAGLE flying", "$25.00", "15-04-02 12:30"),
+        ]
+
+        for name, price, date in assets:
+            # 1. Create the Item container
+            item = QtWidgets.QListWidgetItem()
+            item.setSizeHint(QtCore.QSize(180, 200)) # Must match widget size
+            
+            # 2. Add to list
+            self.gallery_list.addItem(item)
+            
+            # 3. Create Custom Widget
+            card = AssetCardWidget(name, price, date)
+            
+            # 4. Attach Widget to Item
+            self.gallery_list.setItemWidget(item, card)
+
+        self.splitter.addWidget(self.gallery_list)
+
+    def build_inspector_panel(self):
+        panel = QtWidgets.QFrame()
+        panel.setStyleSheet("background-color: #2b2b2b;")
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # 1. Preview Area
+        preview_frame = QtWidgets.QFrame()
+        preview_frame.setFixedHeight(200)
+        preview_frame.setStyleSheet("background-color: #111; border: 1px solid #444;")
+        p_layout = QtWidgets.QVBoxLayout(preview_frame)
+        
+        lbl_preview = QtWidgets.QLabel("3D VIEW")
+        lbl_preview.setStyleSheet("color: #555; font-weight: bold;")
+        lbl_preview.setAlignment(QtCore.Qt.AlignCenter)
+        p_layout.addWidget(lbl_preview)
+        
+        layout.addWidget(preview_frame)
+        
+        # 2. License Options
+        radio_std = QtWidgets.QRadioButton("Standard License")
+        radio_ext = QtWidgets.QRadioButton("Extended License")
+        radio_std.setChecked(True)
+        layout.addWidget(radio_std)
+        layout.addWidget(radio_ext)
+        
+        # 3. Buy Button
+        btn_buy = QtWidgets.QPushButton("Buy Now $49.00")
+        btn_buy.setFixedHeight(40)
+        btn_buy.setStyleSheet("""
+            QPushButton { background-color: #8db600; color: white; font-weight: bold; border-radius: 4px; }
+            QPushButton:hover { background-color: #9ec900; }
+        """)
+        layout.addWidget(btn_buy)
+        
+        # 4. Info Table
+        layout.addSpacing(20)
+        lbl_info = QtWidgets.QLabel("PIG with Native File")
+        lbl_info.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
+        layout.addWidget(lbl_info)
+        
+        lbl_author = QtWidgets.QLabel("by PROTOFACTOR")
+        lbl_author.setStyleSheet("color: #aaa; margin-bottom: 10px;")
+        layout.addWidget(lbl_author)
+        
+        # Table Grid
+        info_grid = QtWidgets.QGridLayout()
+        labels = [
+            ("Price:", "USD $49.00"),
+            ("Date:", "Mar 28 2015"),
+            ("License:", "Standard"),
+            ("File Types:", "ZIP, FBX, OBJ"),
+            ("File Size:", "26 MB")
+        ]
+        
+        for i, (key, val) in enumerate(labels):
+            l_key = QtWidgets.QLabel(key)
+            l_key.setStyleSheet("color: #aaa;")
+            l_val = QtWidgets.QLabel(val)
+            l_val.setStyleSheet("color: white;")
+            l_val.setAlignment(QtCore.Qt.AlignRight)
+            
+            info_grid.addWidget(l_key, i, 0)
+            info_grid.addWidget(l_val, i, 1)
+            
+        layout.addLayout(info_grid)
+        layout.addStretch()
+        
+        self.splitter.addWidget(panel)
+
+def show_asset_browser():
+    if cmds.workspaceControl("AssetBrowserWorkspaceControl", exists=True):
+        cmds.deleteUI("AssetBrowserWorkspaceControl")
+    
+    if AssetBrowser._instance:
+        try:
+            AssetBrowser._instance.close()
+            AssetBrowser._instance.deleteLater()
+        except: pass
+        
+    AssetBrowser._instance = AssetBrowser()
+    AssetBrowser._instance.show(dockable=True, width=1200, height=700, floating=True)
+
+if __name__ == '__main__':
+    show_asset_browser()

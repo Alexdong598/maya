@@ -1,0 +1,237 @@
+import maya.OpenMaya as om
+import maya.cmds as cmds
+import math
+import importlib
+import sys
+from pymel.core import *
+
+def get_dag_path(node_name):
+    try:
+        selList = om.MSelectionList()
+        selList.add(node_name)
+        if cmds.objectType(node_name) == 'transform':
+            shapes = cmds.listRelatives(node_name, shapes=True, fullPath=True)
+            if not shapes:
+                return None
+            mesh_shape = next((shape for shape in shapes if cmds.objectType(shape) == 'mesh'), None)
+            if not mesh_shape:
+                return None
+            selList.clear()
+            selList.add(mesh_shape)
+        elif cmds.objectType(node_name) != 'mesh':
+            return None
+        selListIter = om.MItSelectionList(selList, om.MFn.kMesh)
+        if selListIter.isDone():
+            return None
+        path = om.MDagPath()
+        selListIter.getDagPath(path)
+        return path
+    except:
+        return None
+
+def get_uv_shell_components(node_name):
+    if not cmds.objExists(node_name) or cmds.objectType(node_name) != 'transform':
+        return []
+    mesh_shape = cmds.listRelatives(node_name, shapes=True, fullPath=True)
+    if not mesh_shape:
+        return []
+    shape_name = next((shape for shape in mesh_shape if cmds.objectType(shape) == 'mesh'), None)
+    if not shape_name:
+        return []
+    uv_sets = cmds.polyUVSet(shape_name, q=True, allUVSets=True)
+    if not uv_sets:
+        return []
+    all_components_info = []
+    dag_path = get_dag_path(node_name)
+    if not dag_path:
+        return []
+    try:
+        shape_fn = om.MFnMesh(dag_path)
+        for uvset in uv_sets:
+            u_array = om.MFloatArray()
+            v_array = om.MFloatArray()
+            shape_fn.getUVs(u_array, v_array, uvset)
+            uv_ids = om.MIntArray()
+            nb_shells_ptr = om.MScriptUtil().asUintPtr()
+            shape_fn.getUvShellsIds(uv_ids, nb_shells_ptr, uvset)
+            components_by_shell = {}
+            for i in range(uv_ids.length()):
+                if i < u_array.length():
+                    shell_id = uv_ids[i]
+                    component = f"{shape_name}.map[{i}]"
+                    components_by_shell.setdefault(shell_id, []).append(component)
+            all_components_info.append({uvset: components_by_shell})
+    except:
+        return []
+    return all_components_info
+
+def get_uv_shell_coordinates(node_name):
+    if not cmds.objExists(node_name) or cmds.objectType(node_name) != 'transform':
+        return []
+    mesh_shape = cmds.listRelatives(node_name, shapes=True, fullPath=True)
+    if not mesh_shape:
+        return []
+    shape_name = next((shape for shape in mesh_shape if cmds.objectType(shape) == 'mesh'), None)
+    if not shape_name:
+        return []
+    uv_sets = cmds.polyUVSet(shape_name, q=True, allUVSets=True)
+    if not uv_sets:
+        return []
+    all_coords_info = []
+    dag_path = get_dag_path(node_name)
+    if not dag_path:
+        return []
+    try:
+        shape_fn = om.MFnMesh(dag_path)
+        for uvset in uv_sets:
+            u_array = om.MFloatArray()
+            v_array = om.MFloatArray()
+            shape_fn.getUVs(u_array, v_array, uvset)
+            uv_ids = om.MIntArray()
+            nb_shells_ptr = om.MScriptUtil().asUintPtr()
+            shape_fn.getUvShellsIds(uv_ids, nb_shells_ptr, uvset)
+            coords_by_shell = {}
+            for i in range(uv_ids.length()):
+                if i < u_array.length():
+                    shell_id = uv_ids[i]
+                    coord = [u_array[i], v_array[i]]
+                    coords_by_shell.setdefault(shell_id, []).append(coord)
+            all_coords_info.append({uvset: coords_by_shell})
+    except:
+        return []
+    return all_coords_info
+
+def analyze_uv_shell_integer_and_sign(coords):
+    if not coords:
+        return set(), False
+    unique_ints = set()
+    has_negative = False
+    for uv in coords:
+        u_int = math.floor(uv[0])
+        v_int = math.floor(uv[1])
+        unique_ints.add((u_int, v_int))
+        if uv[0] < 0 or uv[1] < 0:
+            has_negative = True
+    return unique_ints, has_negative
+
+def get_quadrant_number(u_int, v_int):
+    return 1001 + v_int * 10 + u_int
+
+def map_shell_to_faces(mesh_name, uvset_name, shell_id):
+    if not cmds.objExists(mesh_name):
+        return []
+    mesh_shape = cmds.listRelatives(mesh_name, shapes=True, fullPath=True)
+    if not mesh_shape:
+        return []
+    shape_name = next((shape for shape in mesh_shape if cmds.objectType(shape) == 'mesh'), None)
+    if not shape_name:
+        return []
+    all_components_info = get_uv_shell_components(mesh_name)
+    components_for_shell = []
+    for uvset_data in all_components_info:
+        if uvset_name in uvset_data:
+            components = uvset_data[uvset_name].get(shell_id, [])
+            components_for_shell = [f"{shape_name}.map[{comp.split('[')[-1][:-1]}]" for comp in components if comp and '[' in comp]
+            break
+    if not components_for_shell:
+        return []
+    try:
+        faces = cmds.polyListComponentConversion(components_for_shell, fromUV=True, toFace=True, internal=True)
+        valid_faces = [f for f in cmds.ls(faces, flatten=True) if f]
+        return list(set(valid_faces))
+    except:
+        return []
+
+def check_uv_cross_negative(selection=None):
+    """Check for UV cross-quadrant and negative UVs recursively"""
+    problem_faces = []
+    cross_quadrant_details = []
+    negative_details = []
+    negative_quadrant_numbers = set()
+    
+    # Get selection or use provided
+    sel = selection if selection else ls(sl=1, fl=1)
+    if not sel:
+        warning("Please select objects to check")
+        return
+        
+    # Get all mesh descendants
+    meshes = []
+    for obj in sel:
+        if obj.type() == 'transform':
+            meshes.extend(listRelatives(obj, allDescendents=True, type='mesh', fullPath=True) or [])
+    
+    if not meshes:
+        warning("No mesh objects found in selection")
+        return
+    
+    for mesh in meshes:
+        # Get transform parent if this is a shape node
+        mesh_name = str(mesh)
+        if not cmds.objExists(mesh_name):
+            continue
+            
+        if cmds.objectType(mesh_name) == 'mesh':
+            parents = cmds.listRelatives(mesh_name, parent=True, fullPath=True)
+            if not parents:
+                continue
+            mesh_name = parents[0]
+        all_coords_info = get_uv_shell_coordinates(mesh_name)
+        if not all_coords_info:
+            continue
+            
+        for uvset_data in all_coords_info:
+            for uvset_name, shells in uvset_data.items():
+                for shell_id in sorted(shells.keys()):
+                    coords = shells[shell_id]
+                    unique_ints_set, has_negative = analyze_uv_shell_integer_and_sign(coords)
+                    if len(unique_ints_set) > 1:
+                        cross_quadrant_details.append((uvset_name, shell_id, unique_ints_set))
+                    if has_negative:
+                        negative_details.append((uvset_name, shell_id, unique_ints_set))
+                        for u_int, v_int in unique_ints_set:
+                            if u_int < 0 or v_int < 0:
+                                quad_num = get_quadrant_number(u_int, v_int)
+                                negative_quadrant_numbers.add(quad_num)
+
+        all_problem_shells_set = set((uvset_name, shell_id) for uvset_name, shell_id, _ in cross_quadrant_details + negative_details)
+        for uvset_name, shell_id in all_problem_shells_set:
+            faces = map_shell_to_faces(mesh_name, uvset_name, shell_id)
+            problem_faces.extend(faces)
+
+    num_cross_quadrant = len(cross_quadrant_details)
+    num_negative = len(negative_details)
+    total_problem_shells = len(all_problem_shells_set)
+
+    # Build dialog message
+    oStr = "Found UV issues:\n\n" if total_problem_shells > 0 else "✅ All UV shells are consistent and have no negative coordinates."
+    if num_cross_quadrant > 0:
+        oStr += f"- {num_cross_quadrant} shells cross quadrants\n"
+        for uvset_name, shell_id, unique_ints_set in sorted(cross_quadrant_details):
+            quadrant_numbers = sorted(get_quadrant_number(u, v) for u, v in unique_ints_set)
+            oStr += f"  - {uvset_name} shell {shell_id}: crosses {len(unique_ints_set)} quadrants ({', '.join(map(str, quadrant_numbers))})\n"
+    if num_negative > 0:
+        oStr += f"- {num_negative} shells have negative coordinates\n"
+        if negative_quadrant_numbers:
+            oStr += f"  Negative quadrants: {', '.join(map(str, sorted(negative_quadrant_numbers)))}\n"
+
+    confirmDialog(button="Ok", m=oStr, t="UV Cross & Negative Check")
+    
+    if problem_faces:
+        select(problem_faces, r=1)
+    return problem_faces
+
+def get_command():
+    """Return command implementation"""
+    def _command():
+        check_uv_cross_negative()
+    return _command
+
+def execute():
+    """Execute with reloading"""
+    importlib.reload(sys.modules[__name__])
+    cmd = get_command()
+    cmd()
+
+if __name__ == "__main__":
+    execute()
